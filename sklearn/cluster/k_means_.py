@@ -15,23 +15,25 @@ import warnings
 
 import numpy as np
 import scipy.sparse as sp
-from joblib import Parallel, delayed, effective_n_jobs
 
-from ..base import BaseEstimator, ClusterMixin, TransformerMixin
-from ..metrics.pairwise import euclidean_distances
-from ..metrics.pairwise import pairwise_distances_argmin_min
-from ..utils.extmath import row_norms, squared_norm, stable_cumsum
-from ..utils.sparsefuncs_fast import assign_rows_csr
-from ..utils.sparsefuncs import mean_variance_axis
-from ..utils.validation import _num_samples
-from ..utils import check_array
-from ..utils import gen_batches
-from ..utils import check_random_state
-from ..utils.validation import check_is_fitted
-from ..utils.validation import FLOAT_DTYPES
-from ..exceptions import ConvergenceWarning
-from . import _k_means
-from ._k_means_elkan import k_means_elkan
+from sklearn.base import BaseEstimator, ClusterMixin, TransformerMixin
+from sklearn.metrics.pairwise import euclidean_distances
+from sklearn.metrics.pairwise import pairwise_distances_argmin_min
+from sklearn.utils.extmath import row_norms, squared_norm, stable_cumsum
+from sklearn.utils.sparsefuncs_fast import assign_rows_csr
+from sklearn.utils.sparsefuncs import mean_variance_axis
+from sklearn.utils.validation import _num_samples
+from sklearn.utils import check_array
+from sklearn.utils import gen_batches
+from sklearn.utils import check_random_state
+from sklearn.utils.validation import check_is_fitted
+from sklearn.utils.validation import FLOAT_DTYPES
+from sklearn.utils._joblib import Parallel
+from sklearn.utils._joblib import delayed
+from sklearn.utils._joblib import effective_n_jobs
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.cluster import _k_means
+from sklearn.cluster._k_means_elkan import k_means_elkan
 
 
 ###############################################################################
@@ -1740,3 +1742,9 @@ class MiniBatchKMeans(KMeans):
 
         X = self._check_test_data(X)
         return self._labels_inertia_minibatch(X, sample_weight)[0]
+
+if __name__=="__main__":
+    X = np.array([[1, 2], [1, 4], [1, 0], [10, 2], [10, 4], [10, 0]])
+    kmeans = KMeans(n_clusters=2, random_state=0).fit(X)
+    print(kmeans.labels_)
+    print(kmeans.cluster_centers_)
