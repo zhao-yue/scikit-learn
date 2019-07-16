@@ -1,3 +1,4 @@
+#Until July 15th update. Program run successfully but output wrong
 """K-means clustering"""
 
 # Authors: Gael Varoquaux <gael.varoquaux@normalesup.org>
@@ -15,26 +16,24 @@ import warnings
 
 import numpy as np
 import scipy.sparse as sp
+from joblib import Parallel, delayed, effective_n_jobs
 
-from sklearn.base import BaseEstimator, ClusterMixin, TransformerMixin
-from sklearn.metrics.pairwise import euclidean_distances
-from sklearn.metrics.pairwise import pairwise_distances_argmin_min
-from sklearn.utils.extmath import row_norms, squared_norm, stable_cumsum
-from sklearn.utils.sparsefuncs_fast import assign_rows_csr
-from sklearn.utils.sparsefuncs import mean_variance_axis
-from sklearn.utils.validation import _num_samples
-from sklearn.utils import check_array
-from sklearn.utils import gen_batches
-from sklearn.utils import check_random_state
-from sklearn.utils.validation import check_is_fitted
-from sklearn.utils.validation import FLOAT_DTYPES
-from sklearn.utils._joblib import Parallel
-from sklearn.utils._joblib import delayed
-from sklearn.utils._joblib import effective_n_jobs
-from sklearn.exceptions import ConvergenceWarning
-from sklearn.cluster import _k_means
-from sklearn.cluster._k_means_elkan import k_means_elkan
-
+from ..base import BaseEstimator, ClusterMixin, TransformerMixin
+from ..metrics.pairwise import euclidean_distances
+from ..metrics.pairwise import pairwise_distances_argmin_min
+from ..utils.extmath import row_norms, squared_norm, stable_cumsum
+from ..utils.sparsefuncs_fast import assign_rows_csr
+from ..utils.sparsefuncs import mean_variance_axis
+from ..utils.validation import _num_samples
+from ..utils import check_array
+from ..utils import gen_batches
+from ..utils import check_random_state
+from ..utils.validation import check_is_fitted
+from ..utils.validation import FLOAT_DTYPES
+from ..exceptions import ConvergenceWarning
+from . import _k_means
+from ._k_means_elkan import k_means_elkan
+from mpi4py import MPI
 
 ###############################################################################
 # Initialization heuristic
@@ -137,7 +136,6 @@ def _k_init(X, n_clusters, x_squared_norms, random_state, n_local_trials=None):
             centers[c] = X[best_candidate]
         current_pot = best_pot
         closest_dist_sq = best_dist_sq
-
     return centers
 
 
@@ -524,12 +522,22 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
     sample_weight = _check_sample_weight(X, sample_weight)
 
     best_labels, best_inertia, best_centers = None, None, None
-    # init
-    centers = _init_centroids(X, n_clusters, init, random_state=random_state,
-                              x_squared_norms=x_squared_norms)
-    if verbose:
-        print("Initialization complete")
 
+    global comm,size,rank
+    comm = MPI.COMM_WORLD
+    size = comm.Get_size()
+    rank = comm.Get_rank()
+    # init
+    if rank == 0:
+        centers = _init_centroids(X, n_clusters, init, random_state=random_state,
+                              x_squared_norms=x_squared_norms)
+        if verbose:
+            print("Initialization complete")
+
+    else:
+        centers = np.empty((n_clusters, X.shape[1]), dtype=X.dtype)
+    comm.Bcast(centers,root=0)
+    
     # Allocate memory to store the distances for each sample to its
     # closer center for reallocation in case of ties
     distances = np.zeros(shape=(X.shape[0],), dtype=X.dtype)
@@ -575,6 +583,8 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
                             precompute_distances=precompute_distances,
                             distances=distances)
 
+    comm.Allreduce(MPI.IN_PLACE, best_labels, op=MPI.SUM)
+    best_labels=best_labels-1
     return best_labels, best_inertia, best_centers, i + 1
 
 
@@ -667,7 +677,7 @@ def _labels_inertia(X, sample_weight, x_squared_norms, centers,
     sample_weight = _check_sample_weight(X, sample_weight)
     # set the default value of centers to -1 to be able to detect any anomaly
     # easily
-    labels = np.full(n_samples, -1, np.int32)
+    labels = np.full(n_samples, 0, np.int32)
     if distances is None:
         distances = np.zeros(shape=(0,), dtype=X.dtype)
     # distances will be changed in-place
@@ -1743,8 +1753,3 @@ class MiniBatchKMeans(KMeans):
         X = self._check_test_data(X)
         return self._labels_inertia_minibatch(X, sample_weight)[0]
 
-if __name__=="__main__":
-    X = np.array([[1, 2], [1, 4], [1, 0], [10, 2], [10, 4], [10, 0]])
-    kmeans = KMeans(n_clusters=2, random_state=0).fit(X)
-    print(kmeans.labels_)
-    print(kmeans.cluster_centers_)
