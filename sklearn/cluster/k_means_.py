@@ -551,7 +551,10 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
                             precompute_distances=precompute_distances,
                             distances=distances)
         inertia=np.array([inertia_],dtype=np.float)
+        #inertiaa=np.array([inertia_],dtype=np.float)
         comm.Allreduce(MPI.IN_PLACE, inertia, op=MPI.SUM)
+        #comm.Reduce(inertia,inertiaa, op=MPI.SUM,root=0)
+        #inertia = inertiaa[0]
         # computation of the means is also called the M-step of EM
         if sp.issparse(X):
             centers = _k_means._centers_sparse(X, sample_weight, labels,
@@ -560,7 +563,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
             centers = _k_means._centers_dense(X, sample_weight, labels,
                                               n_clusters, distances)
 
-        if verbose:
+        if verbose and rank == 0 :
             print("Iteration %2d, inertia %.3f" % (i, inertia))
 
         if best_inertia is None or inertia < best_inertia:
@@ -570,7 +573,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
 
         center_shift_total = squared_norm(centers_old - centers)
         if center_shift_total <= tol:
-            if verbose:
+            if verbose and rank == 0:
                 print("Converged at iteration %d: "
                       "center shift %e within tolerance %e"
                       % (i, center_shift_total, tol))
@@ -585,7 +588,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
                             distances=distances)
 
     comm.Allreduce(MPI.IN_PLACE, best_labels, op=MPI.SUM)
-    best_labels=best_labels-1
+    best_labels=best_labels-1 #In order to allreduce, best_labels were added 1 
     return best_labels, best_inertia, best_centers, i + 1
 
 

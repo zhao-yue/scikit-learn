@@ -75,7 +75,7 @@ cpdef DOUBLE _assign_labels_array(np.ndarray[floating, ndim=2] X,
         center_squared_norms[center_idx] = _dot(
             n_features, &centers[center_idx, 0], center_stride,
             &centers[center_idx, 0], center_stride)
-        
+
     comm = MPI.COMM_WORLD
     sample_size = math.ceil(n_samples/comm.Get_size())
     sample_from = comm.Get_rank()*sample_size
@@ -96,7 +96,7 @@ cpdef DOUBLE _assign_labels_array(np.ndarray[floating, ndim=2] X,
             dist *= sample_weight[sample_idx]
             if min_dist == -1 or dist < min_dist:
                 min_dist = dist
-                labels[sample_idx] = center_idx+1
+                labels[sample_idx] = center_idx+1 #labels are from 1 to n in order to allreduce later
 
         if store_distances:
             distances[sample_idx] = min_dist      
@@ -316,7 +316,7 @@ def _centers_dense(np.ndarray[floating, ndim=2] X,
         sample_to = n_samples
 
     for i in range(sample_from,sample_to):
-        c = labels[i]-1
+        c = labels[i]-1 #Labels were added 1 for the convenience of allreduce
         weight_in_cluster[c] += sample_weight[i]
     comm.Allreduce(MPI.IN_PLACE, weight_in_cluster, op=MPI.SUM)
     empty_clusters = np.where(weight_in_cluster == 0)[0]
@@ -335,7 +335,7 @@ def _centers_dense(np.ndarray[floating, ndim=2] X,
 
     for i in range(sample_from,sample_to):
         for j in range(n_features):
-            centers[labels[i]-1, j] += X[i, j] * sample_weight[i]
+            centers[labels[i]-1, j] += X[i, j] * sample_weight[i] #Remember labels were added 1
 
     centers /= weight_in_cluster[:, np.newaxis]
     comm.Allreduce(MPI.IN_PLACE, centers, op=MPI.SUM)
