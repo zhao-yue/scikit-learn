@@ -546,11 +546,12 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
     for i in range(max_iter):
         centers_old = centers.copy()
         # labels assignment is also called the E-step of EM
-        labels, inertia = \
+        labels, inertia_ = \
             _labels_inertia(X, sample_weight, x_squared_norms, centers,
                             precompute_distances=precompute_distances,
                             distances=distances)
-
+        inertia=np.array([inertia_],dtype=np.float)
+        comm.Allreduce(MPI.IN_PLACE, inertia, op=MPI.SUM)
         # computation of the means is also called the M-step of EM
         if sp.issparse(X):
             centers = _k_means._centers_sparse(X, sample_weight, labels,

@@ -30,7 +30,7 @@ kmeans = KMeans(n_clusters=3, max_iter=300,random_state=35732643,n_init=1,verbos
 end_time2 = time.time()
 #print(kmeans.labels_)
 print(kmeans.cluster_centers_)
-#np.savetxt("output0.txt",kmeans.labels_,fmt='%d')
+np.savetxt("output2.txt",kmeans.labels_,fmt='%d')
 print ("Open file: %s sec; Preprocess data:%s sec \nExecution time parallel %s sec" % (end_time0-start_time0,end_time1-start_time1,end_time2 - start_time2))
 ''' # A very simple test
 X = np.array([[1, 2], [1, 4], [1, 0], [10, 2], [10, 4], [10, 0]])
