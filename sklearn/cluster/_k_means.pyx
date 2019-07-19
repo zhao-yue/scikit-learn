@@ -1,4 +1,3 @@
-#Until July 15th program run successfully but output wrong
 # cython: profile=True
 # Profiling is enabled by default as the overhead does not seem to be
 # measurable on this specific use case.
@@ -17,13 +16,9 @@ import scipy.sparse as sp
 cimport numpy as np
 cimport cython
 from cython cimport floating
-
+from mpi4py import MPI
 from ..utils.sparsefuncs_fast import assign_rows_csr
 from ..utils._cython_blas cimport _dot
-
-from mpi4py import MPI
-import logging
-import math
 
 ctypedef np.float64_t DOUBLE
 ctypedef np.int32_t INT
@@ -52,7 +47,6 @@ cpdef DOUBLE _assign_labels_array(np.ndarray[floating, ndim=2] X,
         unsigned int store_distances = 0
         unsigned int k
         np.ndarray[floating, ndim=1] center_squared_norms
-        unsigned int sample_size,sample_from,sample_to 
         # the following variables are always double cause make them floating
         # does not save any memory, but makes the code much bigger
         DOUBLE inertia = 0.0
@@ -75,14 +69,7 @@ cpdef DOUBLE _assign_labels_array(np.ndarray[floating, ndim=2] X,
         center_squared_norms[center_idx] = _dot(
             n_features, &centers[center_idx, 0], center_stride,
             &centers[center_idx, 0], center_stride)
-
-    comm = MPI.COMM_WORLD
-    sample_size = math.ceil(n_samples/comm.Get_size())
-    sample_from = comm.Get_rank()*sample_size
-    sample_to = sample_from+sample_size
-    if sample_to > n_samples:
-        sample_to = n_samples
-    for sample_idx in range(sample_from,sample_to):
+    for sample_idx in range(n_samples):
         min_dist = -1
         for center_idx in range(n_clusters):
             dist = 0.0
@@ -96,11 +83,12 @@ cpdef DOUBLE _assign_labels_array(np.ndarray[floating, ndim=2] X,
             dist *= sample_weight[sample_idx]
             if min_dist == -1 or dist < min_dist:
                 min_dist = dist
-                labels[sample_idx] = center_idx+1 #labels are from 1 to n in order to allreduce later
+                labels[sample_idx] = center_idx
 
         if store_distances:
-            distances[sample_idx] = min_dist      
-        inertia+= min_dist
+            distances[sample_idx] = min_dist
+        inertia += min_dist
+
     return inertia
 
 
@@ -302,21 +290,15 @@ def _centers_dense(np.ndarray[floating, ndim=2] X,
     cdef int i, j, c
     cdef np.ndarray[floating, ndim=2] centers
     cdef np.ndarray[floating, ndim=1] weight_in_cluster
-    cdef unsigned int sample_size,sample_from,sample_to 
 
     dtype = np.float32 if floating is float else np.float64
     centers = np.zeros((n_clusters, n_features), dtype=dtype)
     weight_in_cluster = np.zeros((n_clusters,), dtype=dtype)
 
     comm = MPI.COMM_WORLD
-    sample_size = math.ceil(n_samples/comm.Get_size())
-    sample_from = comm.Get_rank()*sample_size
-    sample_to = sample_from+sample_size
-    if sample_to > n_samples:
-        sample_to = n_samples
 
-    for i in range(sample_from,sample_to):
-        c = labels[i]-1 #Labels were added 1 for the convenience of allreduce
+    for i in range(n_samples):
+        c = labels[i]
         weight_in_cluster[c] += sample_weight[i]
     comm.Allreduce(MPI.IN_PLACE, weight_in_cluster, op=MPI.SUM)
     empty_clusters = np.where(weight_in_cluster == 0)[0]
@@ -324,7 +306,7 @@ def _centers_dense(np.ndarray[floating, ndim=2] X,
 
     if len(empty_clusters):
         # find points to reassign empty clusters to
-        far_from_centers = distances.argsort()[::-1] #reverse. i.e. descending order
+        far_from_centers = distances.argsort()[::-1]
 
         for i, cluster_id in enumerate(empty_clusters):
             # XXX two relocated clusters could be close to each other
@@ -333,9 +315,9 @@ def _centers_dense(np.ndarray[floating, ndim=2] X,
             centers[cluster_id] = new_center
             weight_in_cluster[cluster_id] = sample_weight[far_index]
 
-    for i in range(sample_from,sample_to):
+    for i in range(n_samples):
         for j in range(n_features):
-            centers[labels[i]-1, j] += X[i, j] * sample_weight[i] #Remember labels were added 1
+            centers[labels[i], j] += X[i, j] * sample_weight[i]
 
     centers /= weight_in_cluster[:, np.newaxis]
     comm.Allreduce(MPI.IN_PLACE, centers, op=MPI.SUM)
@@ -413,4 +395,3 @@ def _centers_sparse(X, np.ndarray[floating, ndim=1] sample_weight,
     centers /= weight_in_cluster[:, np.newaxis]
 
     return centers
-

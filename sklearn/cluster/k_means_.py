@@ -1,4 +1,3 @@
-#Until July 15th update. Program run successfully but output wrong
 """K-means clustering"""
 
 # Authors: Gael Varoquaux <gael.varoquaux@normalesup.org>
@@ -136,6 +135,7 @@ def _k_init(X, n_clusters, x_squared_norms, random_state, n_local_trials=None):
             centers[c] = X[best_candidate]
         current_pot = best_pot
         closest_dist_sq = best_dist_sq
+
     return centers
 
 
@@ -155,12 +155,12 @@ def _validate_center_shape(X, n_centers, centers):
             % (centers.shape[1], X.shape[1]))
 
 
-def _tolerance(X, tol):
+def _tolerance(X,X_mean_global, tol):
     """Return a tolerance which is independent of the dataset"""
     if sp.issparse(X):
         variances = mean_variance_axis(X, axis=0)[1]
     else:
-        variances = np.var(X, axis=0)
+        variances = np.mean(np.power(np.abs(X-X_mean_global),2))
     return np.mean(variances) * tol
 
 
@@ -309,8 +309,13 @@ def k_means(X, n_clusters, sample_weight=None, init='k-means++',
     if _num_samples(X) < n_clusters:
         raise ValueError("n_samples=%d should be >= n_clusters=%d" % (
             _num_samples(X), n_clusters))
-
-    tol = _tolerance(X, tol)
+    
+    X_sum_local = np.sum(X,axis=0)
+    X_sum_global = comm.allreduce(X_sum_local, op=MPI.SUM)
+    n_samples_global = comm.allreduce(X.shape[0], op=MPI.SUM)
+    X_mean_global = X_sum_global/n_samples_global
+    #print(X,"local",X_sum_local,"\nglobal",X_sum_global,"\nsamplesn",n_samples_global,"\nmean",X_mean_global)
+    tol = _tolerance(X,X_mean_global, tol)
 
     # If the distances are precomputed every job will create a matrix of shape
     # (n_clusters, n_samples). To stop KMeans from eating up memory we only
@@ -340,13 +345,18 @@ def k_means(X, n_clusters, sample_weight=None, init='k-means++',
 
     # subtract of mean of x for more accurate distance computations
     if not sp.issparse(X):
-        X_mean = X.mean(axis=0)
-        # The copy was already done above
-        X -= X_mean
-
+        #The copy was already done above
+        X -= X_mean_global
         if hasattr(init, '__array__'):
-            init -= X_mean
+            init -= X_mean_global
 
+    # if not sp.issparse(X):
+    #     X_mean = X.mean(axis=0)
+    #     # The copy was already done above
+    #     X -= X_mean
+
+    #     if hasattr(init, '__array__'):
+    #         init -= X_mean
     # precompute squared norms of data points
     x_squared_norms = row_norms(X, squared=True)
 
@@ -364,6 +374,7 @@ def k_means(X, n_clusters, sample_weight=None, init='k-means++',
     else:
         raise ValueError("Algorithm must be 'auto', 'full' or 'elkan', got"
                          " %s" % str(algorithm))
+
     if effective_n_jobs(n_jobs) == 1:
         # For a single thread, less memory is needed if we just store one set
         # of the best results (as opposed to one set per run per thread).
@@ -380,6 +391,7 @@ def k_means(X, n_clusters, sample_weight=None, init='k-means++',
                 best_centers = centers.copy()
                 best_inertia = inertia
                 best_n_iter = n_iter_
+
     else:
         # parallelisation of k-means runs
         seeds = random_state.randint(np.iinfo(np.int32).max, size=n_init)
@@ -399,11 +411,11 @@ def k_means(X, n_clusters, sample_weight=None, init='k-means++',
         best_inertia = inertia[best]
         best_centers = centers[best]
         best_n_iter = n_iters[best]
-
+    
     if not sp.issparse(X):
         if not copy_x:
-            X += X_mean
-        best_centers += X_mean
+            X += X_mean_global
+        best_centers += X_mean_global
 
     distinct_clusters = len(set(best_labels))
     if distinct_clusters < n_clusters:
@@ -522,18 +534,12 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
     sample_weight = _check_sample_weight(X, sample_weight)
 
     best_labels, best_inertia, best_centers = None, None, None
-
-    global comm,size,rank
-    comm = MPI.COMM_WORLD
-    size = comm.Get_size()
-    rank = comm.Get_rank()
     # init
     if rank == 0:
         centers = _init_centroids(X, n_clusters, init, random_state=random_state,
                               x_squared_norms=x_squared_norms)
         if verbose:
             print("Initialization complete")
-
     else:
         centers = np.empty((n_clusters, X.shape[1]), dtype=X.dtype)
     comm.Bcast(centers,root=0)
@@ -541,7 +547,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
     # Allocate memory to store the distances for each sample to its
     # closer center for reallocation in case of ties
     distances = np.zeros(shape=(X.shape[0],), dtype=X.dtype)
-
+    print(rank,".py centers",centers)
     # iterations
     for i in range(max_iter):
         centers_old = centers.copy()
@@ -550,11 +556,8 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
             _labels_inertia(X, sample_weight, x_squared_norms, centers,
                             precompute_distances=precompute_distances,
                             distances=distances)
-        inertia=np.array([inertia_],dtype=np.float)
-        #inertiaa=np.array([inertia_],dtype=np.float)
-        comm.Allreduce(MPI.IN_PLACE, inertia, op=MPI.SUM)
-        #comm.Reduce(inertia,inertiaa, op=MPI.SUM,root=0)
-        #inertia = inertiaa[0]
+
+        inertia = comm.allreduce(inertia_, op=MPI.SUM) #Sum up all the cores
         # computation of the means is also called the M-step of EM
         if sp.issparse(X):
             centers = _k_means._centers_sparse(X, sample_weight, labels,
@@ -562,8 +565,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
         else:
             centers = _k_means._centers_dense(X, sample_weight, labels,
                                               n_clusters, distances)
-
-        if verbose and rank == 0 :
+        if verbose and rank == 0:
             print("Iteration %2d, inertia %.3f" % (i, inertia))
 
         if best_inertia is None or inertia < best_inertia:
@@ -578,7 +580,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
                       "center shift %e within tolerance %e"
                       % (i, center_shift_total, tol))
             break
-
+    #print(rank,".py best_labels",best_labels)    
     if center_shift_total > 0:
         # rerun E-step in case of non-convergence so that predicted labels
         # match cluster centers
@@ -586,9 +588,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
             _labels_inertia(X, sample_weight, x_squared_norms, best_centers,
                             precompute_distances=precompute_distances,
                             distances=distances)
-
-    comm.Allreduce(MPI.IN_PLACE, best_labels, op=MPI.SUM)
-    best_labels=best_labels-1 #In order to allreduce, best_labels were added 1 
+    
     return best_labels, best_inertia, best_centers, i + 1
 
 
@@ -681,7 +681,7 @@ def _labels_inertia(X, sample_weight, x_squared_norms, centers,
     sample_weight = _check_sample_weight(X, sample_weight)
     # set the default value of centers to -1 to be able to detect any anomaly
     # easily
-    labels = np.full(n_samples, 0, np.int32)
+    labels = np.full(n_samples, -1, np.int32)
     if distances is None:
         distances = np.zeros(shape=(0,), dtype=X.dtype)
     # distances will be changed in-place
@@ -940,6 +940,11 @@ class KMeans(BaseEstimator, ClusterMixin, TransformerMixin):
         self.copy_x = copy_x
         self.n_jobs = n_jobs
         self.algorithm = algorithm
+
+        global comm,size,rank
+        comm = MPI.COMM_WORLD
+        size = comm.Get_size()
+        rank = comm.Get_rank()
 
     def _check_test_data(self, X):
         X = check_array(X, accept_sparse='csr', dtype=FLOAT_DTYPES)
@@ -1438,8 +1443,8 @@ class MiniBatchKMeans(KMeans):
     >>> kmeans = kmeans.partial_fit(X[0:6,:])
     >>> kmeans = kmeans.partial_fit(X[6:12,:])
     >>> kmeans.cluster_centers_
-    array([[1, 1],
-           [3, 4]])
+    array([[2. , 1. ],
+           [3.5, 4.5]])
     >>> kmeans.predict([[0, 0], [4, 4]])
     array([0, 1], dtype=int32)
     >>> # fit on the whole data
@@ -1683,7 +1688,8 @@ class MiniBatchKMeans(KMeans):
 
         """
 
-        X = check_array(X, accept_sparse="csr", order="C")
+        X = check_array(X, accept_sparse="csr", order="C",
+                        dtype=[np.float64, np.float32])
         n_samples, n_features = X.shape
         if hasattr(self.init, '__array__'):
             self.init = np.ascontiguousarray(self.init, dtype=X.dtype)
@@ -1756,4 +1762,3 @@ class MiniBatchKMeans(KMeans):
 
         X = self._check_test_data(X)
         return self._labels_inertia_minibatch(X, sample_weight)[0]
-
