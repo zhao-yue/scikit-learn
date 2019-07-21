@@ -541,7 +541,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
         centers = _init_centroids(X, n_clusters, init, random_state=random_state,
                               x_squared_norms=x_squared_norms)
         if verbose:
-            print("Initialization complete",centers)
+            print("Initialization complete")
     else:
         centers = np.empty((n_clusters, X.shape[1]), dtype=X.dtype)
     comm.Bcast(centers,root=0)
@@ -567,12 +567,8 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
         else:
             centers = _k_means._centers_dense(X, sample_weight, labels,
                                               n_clusters, distances)
-        # if rank==0:
-        #     print(".py",i,centers)
         if verbose and rank == 0:
             print("Iteration %2d, inertia %.3f" % (i, inertia))
-        # if rank==0 and i<5:
-        #     print(i,".py centers\n",centers,"distances\n",distances)
         if best_inertia is None or inertia < best_inertia:
             best_labels = labels.copy()
             best_centers = centers.copy()
@@ -585,11 +581,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
                       "center shift %e within tolerance %e"
                       % (i, center_shift_total, tol))
             break
-        if rank==0:
-            print(".py -----i",i,"center_shi",center_shift_total,"\ncenters\n",centers,"\ncenters_old\n",centers_old)
-        # if i==21:
-        #     exit()
-    #print(rank,".py best_labels",best_labels)    
+      
     if center_shift_total > 0:
         # rerun E-step in case of non-convergence so that predicted labels
         # match cluster centers

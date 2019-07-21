@@ -90,8 +90,6 @@ cpdef DOUBLE _assign_labels_array(np.ndarray[floating, ndim=2] X,
         if store_distances:
             distances[sample_idx] = min_dist
         inertia += min_dist
-    # if rank ==0:
-    #     print(".pyx sample_idx", sample_idx)
     return inertia
 
 
@@ -310,67 +308,31 @@ def _centers_dense(np.ndarray[floating, ndim=2] X,
     if len(empty_clusters):
         far_local=[]
         far_global=[]
-        far_from_centers_local = distances.argsort()[::-1] #Get index
+        far_from_centers_local = distances.argsort()[::-1] #Descending sort. Get index
         emp_len = len(empty_clusters)
         for i in range(emp_len):
             far_local_sample=[]
             far_local_sample.append(X[far_from_centers_local[i]])
             far_local.append([distances[far_from_centers_local[i]],sample_weight[far_from_centers_local[i]],far_local_sample])
         far_global=comm.allgather(far_local)
-        far_sorted=sorted(far_global, key=lambda elem: elem[0],reverse=True) 
-        #Note: far_sorted is a 3D list, not regular shape. The size of 2nd dimension is 1.
-
+        far_sorted=sorted(far_global, key=lambda elem: elem[0],reverse=True) #Sort by distance
+        #Note: far_sorted is a 3D list, not regular shape. The size of 2nd dimension is 1. [[[float,float,[array([float,float,float])]]],[[float,float,[array([float,float,float])]]]]
+    
         for i, cluster_id in enumerate(empty_clusters):
             # XXX two relocated clusters could be close to each other
             far_X= np.array(far_sorted[i][0][2])
             new_center = far_X[0,:] * far_sorted[i][0][1]
-            centers[cluster_id] = new_center
-            weight_in_cluster[cluster_id] = far_sorted[i][0][1]/size #divided by size, because later when Allreduce it will be add (size) times
-           
+            centers[cluster_id] = new_center/size #divided by size, because later when Allreduce it will be added (size) times
+            weight_in_cluster[cluster_id] = far_sorted[i][0][1]
     for i in range(n_samples):
         for j in range(n_features):
+
             centers[labels[i], j] += X[i, j] * sample_weight[i]
 
     centers /= weight_in_cluster[:, np.newaxis]
     comm.Allreduce(MPI.IN_PLACE, centers, op=MPI.SUM)
-    # if rank == 0:
-    #      print(".pyx centers after",centers)
     return centers
-'''
-        # find points to reassign empty clusters to
-        far_from_centers_local = distances.argsort()[::-1] #Get index
-        far_local = np.zeros((len(empty_clusters),2+X.shape[1]),dtype=X.dtype)#distance and sample_weight pairs
-        emp_len = len(empty_clusters)
-        for i in range(emp_len):
-            far_local[i,0] = distances[far_from_centers_local[i]]
-            far_local[i,1] = sample_weight[far_from_centers_local[i]]
-            for j in range(0,X.shape[1])
-                far_local[i,j+2] = X[far_from_centers_local[i],j]
-        far_global = np.zeros((emp_len*size,2), dtype=X.dtype)
-        comm.Allgather(far_local,far_global)
-        far_index=np.argsort(far_global[:,0])[::-1]
 
-        for i, cluster_id in enumerate(empty_clusters):
-            # XXX two relocated clusters could be close to each other
-
-            new_center = far_global[far_index[i]][2] * far_global[far_index[i]][1]
-            centers[cluster_id] = new_center
-            weight_in_cluster[cluster_id] = far_global[far_index[i]][1]
-        if rank ==0:
-            print(".pyx  new center",far_global[far_index[i]][2])
-    for i in range(n_samples):
-        for j in range(n_features):
-            centers[labels[i], j] += X[i, j] * sample_weight[i]
-   
-    if rank == 0:
-         print(".pyx ~~~~~~rank",rank,centers)
-         print(".pyx weight...",weight_in_cluster[:, np.newaxis])
-    centers /= weight_in_cluster[:, np.newaxis]
-    comm.Allreduce(MPI.IN_PLACE, centers, op=MPI.SUM)
-    if rank == 0:
-         print(".pyx centers after",centers)
-    return centers
-'''
 
 
 def _centers_sparse(X, np.ndarray[floating, ndim=1] sample_weight,
