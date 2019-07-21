@@ -155,13 +155,15 @@ def _validate_center_shape(X, n_centers, centers):
             % (centers.shape[1], X.shape[1]))
 
 
-def _tolerance(X,X_mean_global, tol):
+def _tolerance(X,n_samples_global,X_mean_global, tol):
     """Return a tolerance which is independent of the dataset"""
     if sp.issparse(X):
         variances = mean_variance_axis(X, axis=0)[1]
-    else:
-        variances = np.mean(np.power(np.abs(X-X_mean_global),2))
-    return np.mean(variances) * tol
+    else: #var = mean(abs(x - x.mean())**2)  mean of both axis
+        variances_temp = np.true_divide(np.sum(np.power(np.abs(X-X_mean_global),2),axis=0),n_samples_global)
+        #var=np.power(np.abs(X-X_mean_global),2)/n_samples_global # The same
+        comm.Allreduce(MPI.IN_PLACE, variances_temp, op=MPI.SUM) #Variance (shape:1,n_clusters)
+    return np.mean(variances_temp) * tol
 
 
 def _check_sample_weight(X, sample_weight):
@@ -315,8 +317,8 @@ def k_means(X, n_clusters, sample_weight=None, init='k-means++',
     n_samples_global = comm.allreduce(X.shape[0], op=MPI.SUM)
     X_mean_global = X_sum_global/n_samples_global
     #print(X,"local",X_sum_local,"\nglobal",X_sum_global,"\nsamplesn",n_samples_global,"\nmean",X_mean_global)
-    tol = _tolerance(X,X_mean_global, tol)
-
+    tol = _tolerance(X,n_samples_global,X_mean_global, tol)
+    #print(rank,"tol",tol)
     # If the distances are precomputed every job will create a matrix of shape
     # (n_clusters, n_samples). To stop KMeans from eating up memory we only
     # activate this if the created matrix is guaranteed to be under 100MB. 12
@@ -539,7 +541,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
         centers = _init_centroids(X, n_clusters, init, random_state=random_state,
                               x_squared_norms=x_squared_norms)
         if verbose:
-            print("Initialization complete")
+            print("Initialization complete",centers)
     else:
         centers = np.empty((n_clusters, X.shape[1]), dtype=X.dtype)
     comm.Bcast(centers,root=0)
@@ -547,7 +549,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
     # Allocate memory to store the distances for each sample to its
     # closer center for reallocation in case of ties
     distances = np.zeros(shape=(X.shape[0],), dtype=X.dtype)
-    print(rank,".py centers",centers)
+    
     # iterations
     for i in range(max_iter):
         centers_old = centers.copy()
@@ -565,9 +567,12 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
         else:
             centers = _k_means._centers_dense(X, sample_weight, labels,
                                               n_clusters, distances)
+        # if rank==0:
+        #     print(".py",i,centers)
         if verbose and rank == 0:
             print("Iteration %2d, inertia %.3f" % (i, inertia))
-
+        # if rank==0 and i<5:
+        #     print(i,".py centers\n",centers,"distances\n",distances)
         if best_inertia is None or inertia < best_inertia:
             best_labels = labels.copy()
             best_centers = centers.copy()
@@ -580,6 +585,10 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
                       "center shift %e within tolerance %e"
                       % (i, center_shift_total, tol))
             break
+        if rank==0:
+            print(".py -----i",i,"center_shi",center_shift_total,"\ncenters\n",centers,"\ncenters_old\n",centers_old)
+        # if i==21:
+        #     exit()
     #print(rank,".py best_labels",best_labels)    
     if center_shift_total > 0:
         # rerun E-step in case of non-convergence so that predicted labels
@@ -588,7 +597,7 @@ def _kmeans_single_lloyd(X, sample_weight, n_clusters, max_iter=300,
             _labels_inertia(X, sample_weight, x_squared_norms, best_centers,
                             precompute_distances=precompute_distances,
                             distances=distances)
-    
+
     return best_labels, best_inertia, best_centers, i + 1
 
 
@@ -765,6 +774,7 @@ def _init_centroids(X, k, init, random_state=None, x_squared_norms=None,
         # ensure that the centers have the same dtype as X
         # this is a requirement of fused types of cython
         centers = np.array(init, dtype=X.dtype)
+        
     elif callable(init):
         centers = init(X, k, random_state=random_state)
         centers = np.asarray(centers, dtype=X.dtype)
@@ -976,7 +986,6 @@ class KMeans(BaseEstimator, ClusterMixin, TransformerMixin):
 
         """
         random_state = check_random_state(self.random_state)
-
         self.cluster_centers_, self.labels_, self.inertia_, self.n_iter_ = \
             k_means(
                 X, n_clusters=self.n_clusters, sample_weight=sample_weight,

@@ -6,6 +6,7 @@ import csv
 from sklearn.cluster.k_means_ import KMeans,k_means
 from mpi4py import MPI
 import math
+
 start_time1 = time.time()
 maxi=1000
 filename='../../../onethousand.csv'
@@ -33,7 +34,7 @@ with open(filename) as fp:
         elif i >= sample_to+1:
             break
 '''
-
+#print(".main",rank,sample_size,sample_from,sample_to)
 with open(filename,'r') as f:
 	reader = csv.reader(f)
 	reader.__next__()
@@ -41,13 +42,15 @@ with open(filename,'r') as f:
 		if reader.line_num-2 >=sample_from and reader.line_num-2 < sample_to: #The first row is column name	
 			data[j]=row
 			j = j+1	
+#print(".main",rank,data.size)
 end_time1 = time.time()
 init_array = np.array([[-0.5,-0.3,0.2], [0,0.3,-0.1], [0.1,-0.5,-0.5]])
 start_time2 = time.time()
 kmeans = KMeans(n_clusters=3, max_iter=600,random_state=35732643,n_init=1,verbose=True,precompute_distances=False,init=init_array,algorithm='full').fit(data)
 end_time2 = time.time()
 #print(rank, "labels",kmeans.labels_)
-print(rank,"main centers\n",kmeans.cluster_centers_)
+if rank==0:
+	print(rank,"main centers\n",kmeans.cluster_centers_)
 '''
 if comm.Get_rank()==0:
 	np.savetxt("output1.txt",kmeans.labels_,fmt='%d')
